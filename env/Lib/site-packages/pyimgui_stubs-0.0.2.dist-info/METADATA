@@ -1,0 +1,13 @@
+Metadata-Version: 2.1
+Name: pyimgui-stubs
+Version: 0.0.2
+Summary: stub files for pyimgui package
+Project-URL: Homepage, https://github.com/denballakh/pyimgui-stubs
+Project-URL: Issues, https://github.com/denballakh/pyimgui-stubs/issues
+Classifier: Programming Language :: Python :: 3
+Classifier: Operating System :: OS Independent
+Requires-Python: >=3.8
+Description-Content-Type: text/markdown
+
+# pyimgui-stubs
+type stubs for imgui library

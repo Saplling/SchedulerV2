@@ -20,6 +20,14 @@ class TimeRange:
         self.start: time = start
         self.end: time = end
 
+    def __eq__(self, value):
+        if isinstance(value, type(self)):
+            return (self.start == value.start and self.end == value.end)
+        raise ValueError(f"Can not compare type {type(self)} with type {type(value)}")
+
+    def __hash__(self):
+        return hash((self.start, self.end))
+
     def overlaps(self, other: "TimeRange") -> bool:
         if not isinstance(other, self.__class__):
             raise ValueError("Can only compare with other time ranges")
@@ -59,12 +67,24 @@ class CourseSection:
     course: Course
     section_id: str
     sessions: tuple[CourseSession]
+    seats_left: int
 
 
 class Schedule:
     def __init__(self, course_sections: set[CourseSection] = None):
         self.course_sections = course_sections if course_sections is not None else set()
         self.days = 0
+
+    def __contains__(self, item):
+        if isinstance(item, CourseSection):
+            return item in self.course_sections
+        elif isinstance(item, str):
+            for course_section in self.course_sections:
+                if item == course_section.section_id:
+                    return True
+            return False
+        else:
+            raise NotImplementedError(f"Type {type(self)} cannot contain {type(item)}")
 
     def conflicts(self, other_section: CourseSection):
         for section in self.course_sections:
@@ -158,9 +178,8 @@ def get_all_courses_in_department(session: requests.Session, department: str) ->
             course_id = course_full_id[:course_full_id.find("Lec")]
             course_name = info_elements[1].get_text(strip=True)
             credit_hours = int(info_elements[2].get_text(strip=True))
-            course = Course(course_id, re.sub(
-                r"\d+", "", course_id), course_name, credit_hours)
-            if course in courses:
+            course = Course(course_id, re.sub(r"\d+", "", course_id), course_name, credit_hours)
+            if course.name in [course.name for course in courses]:  # HACK FIX CAUSE CUD SUCKS ASS AND SOMETIMES HAVE IDENTICAL COURSES WITH DIFFERENT COURSE IDS :DDDDDD
                 continue
             for i, table in enumerate(table_element.find_all("table", class_="Portal_Group_Table nested", summary=f"{course_name} Schedule")):
                 sessions: list[CourseSession] = []
@@ -171,13 +190,12 @@ def get_all_courses_in_department(session: requests.Session, department: str) ->
                     days = cells[3].get_text(strip=True)
                     start_time = cells[5].get_text(strip=True)
                     end_time = cells[6].get_text(strip=True)
-                    time_range = TimeRange.parse_from_string(
-                        start_time, end_time)
-                    sessions.append(CourseSession(
-                        instructor, room, days, time_range))
+                    time_range = TimeRange.parse_from_string(start_time, end_time)
+                    sessions.append(CourseSession(instructor, room, days, time_range))
                 course_full_id = all_course_infos[i+info_index].find("td").get_text(strip=True)
-                courses[course].append(CourseSection(
-                    course, course_full_id, tuple(sessions)))
+                max_seats, taken_seats = int(cells[-2].get_text(strip=True)), int(cells[-1].get_text(strip=True))
+                seats_left = max_seats - taken_seats
+                courses[course].append(CourseSection(course, course_full_id, tuple(sessions), seats_left))
     return (courses, departments_list)
 
 

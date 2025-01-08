@@ -10,6 +10,7 @@ import pickle
 from requests import Session
 from appdirs import user_data_dir
 import os
+from dataclasses import dataclass
 
 if hasattr(sys, '_MEIPASS'):  # PyInstaller's temp directory
     os.environ['PATH'] += os.pathsep + sys._MEIPASS
@@ -121,18 +122,102 @@ class DaysFilter:
         imgui.text("days")
 
 
+class FilteredSchedules:
+    def __init__(self):
+        self.included_sections: set[CourseSection] = set()
+        self.excluded_sections: set[CourseSection] = set()
+        self.filtered_schedules: set[CourseSection] = set()
+
+    @property
+    def filters_exist(self) -> bool:
+        return (self.included_sections or self.excluded_sections)
+
+    def filter_schedules(self, schedules: dict[Schedule]):
+        self.filtered_schedules = set()
+        if not self.filters_exist:
+            return schedules
+        for schedule in schedules:
+            if self.excluded_sections.intersection(schedule.course_sections):
+                continue
+            if self.included_sections.difference(schedule.course_sections):
+                continue
+            self.filtered_schedules.add(schedule)
+        return self.filtered_schedules
+
+    def clear(self):
+        self.__init__()
+
+
 class Tables:
     def __init__(self):
         self.show_tables = False
         self.schedules: dict[Schedule] = {}
+        self.filtered_schedules = FilteredSchedules()
+
+        @dataclass
+        class TabChange:
+            changed: bool = False
+            selected_pos: int = 0
+        self.tab_change = TabChange()
 
     def show(self):
+        if imgui.is_key_pressed(glfw.KEY_RIGHT):
+            self.tab_change.selected_pos = (self.tab_change.selected_pos + 1) % len(self.schedules)  # Wrap around
+            self.tab_change.changed = True
+        elif imgui.is_key_pressed(glfw.KEY_LEFT):
+            self.tab_change.selected_pos = (self.tab_change.selected_pos - 1) % len(self.schedules)  # Wrap around
+            self.tab_change.changed = True
+
+        if self.filtered_schedules.filters_exist:
+            available_width = imgui.get_content_region_available_width()
+            imgui.columns(2, "TabBarWithFilter", border=True)
+            imgui.set_column_width(0, available_width*0.8)
+            imgui.set_column_width(1, available_width*0.2)
+
         if imgui.begin_tab_bar("Main"):
-            for i, scheule in enumerate(self.schedules, start=1):
-                if imgui.begin_tab_item(f"Schedule {i}")[0]:
-                    self._display_sched_table(scheule)
-                    imgui.end_tab_item()
+            for i, scheule in enumerate(self.filtered_schedules.filter_schedules(self.schedules)):
+                tab_flags = 0
+                if self.tab_change.changed and i == self.tab_change.selected_pos:
+                    tab_flags = imgui.TAB_ITEM_SET_SELECTED
+                with imgui.begin_tab_item(f"{i+1}##Schedule {i+1}", flags=tab_flags) as tab:
+                    if tab.selected:
+                        self.tab_change.selected_pos = i if not self.tab_change.changed else self.tab_change.selected_pos
+                        self._display_sched_table(scheule)
+            self.tab_change.changed = False
             imgui.end_tab_bar()
+
+        if self.filtered_schedules.filters_exist:
+            imgui.next_column()  # Move to the second column
+
+            # **Right Column: Filter Section**
+            imgui.text("Filters")
+            imgui.separator()
+            imgui.text("Here you can see filters and exclusions:")
+
+            available_width = imgui.get_content_region_available_width()
+            current_width = 0
+            imgui.bullet_text("Exclusions")
+            for i, included_item in enumerate(filtered_copy := self.filtered_schedules.excluded_sections.copy()):  # Assuming `self.excluded_items` is a list
+                current_width = current_width + imgui.calc_text_size(included_item.section_id)[0] + 20
+                if current_width > available_width:
+                    imgui.new_line()
+                if imgui.button(f"{included_item.section_id}"):
+                    self.filtered_schedules.excluded_sections.remove(included_item)
+                if i != len(filtered_copy)-1:
+                    imgui.same_line()
+
+            current_width = 0
+            imgui.bullet_text("Inclusions")
+            for i, included_item in enumerate(filtered_copy := self.filtered_schedules.included_sections.copy()):
+                current_width = current_width + imgui.calc_text_size(included_item.section_id)[0] + 20
+                if current_width > available_width:
+                    imgui.new_line()
+                if imgui.button(f"{included_item.section_id}"):
+                    self.filtered_schedules.included_sections.remove(included_item)
+                if i != len(filtered_copy)-1:
+                    imgui.same_line()
+
+            imgui.columns(1)  # Reset columns
 
     def _display_sched_table(self, schedule):
         available_width, available_height = imgui.get_content_region_available()
@@ -153,7 +238,18 @@ class Tables:
                         imgui.text(set_time.strftime("%I:%M %p"))
                     else:
                         if (cell_item := self.schedules[schedule][row][col]) is not None:
-                            imgui.text(f"{cell_item.section_id} {cell_item.course.name}")
+                            cell_label = f"{cell_item.section_id} {cell_item.course.name}"
+                            if not cell_item.seats_left:
+                                imgui.push_style_color(imgui.COLOR_TEXT, 1.0, 0.0, 0.0, 1.0)  # Red text
+                            imgui.text(cell_label)
+                            if not cell_item.seats_left:
+                                imgui.pop_style_color()
+                            if imgui.begin_popup_context_item(cell_label+f"##{row}{col}"):
+                                if imgui.menu_item(f"Include##{row}{col}")[0]:
+                                    self.filtered_schedules.included_sections.add(cell_item)
+                                if imgui.menu_item(f"Exclude##{row}{col}")[0]:
+                                    self.filtered_schedules.excluded_sections.add(cell_item)
+                                imgui.end_popup()
             imgui.end_table()
 
     def _get_course_at_this_time(self, given_schedule: Schedule, given_time: time, day: str):
@@ -176,7 +272,7 @@ class Tables:
                     positions[row][col] = self._get_course_at_this_time(schedule, current_time, current_day)
             self.schedules[schedule] = positions
 
-    def filter_schedules(self, is_range, days):
+    def apply_day_filter(self, is_range, days):
         new_schedules_dict = {}
         if is_range:
             def passes(given_day, target_day): return given_day <= target_day
@@ -234,9 +330,10 @@ def frame_commands():
         course_selector.show()
         days_filter.show()
         if imgui.button("Generate Tables"):
+            tables.filtered_schedules.clear()
             schedules_dict = {schedule: None for schedule in parser.create_all_possible_schedules(course_selector.getSectionsForEachCourse())}
             tables.schedules = schedules_dict
-            tables.filter_schedules(days_filter.is_range, days_filter.selected_days)
+            tables.apply_day_filter(days_filter.is_range, days_filter.selected_days)
             tables.generate_table_positions()
             if tables.schedules:
                 tables.show_tables = True

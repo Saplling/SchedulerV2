@@ -11,6 +11,7 @@ from requests import Session
 from appdirs import user_data_dir
 import os
 from dataclasses import dataclass
+import re
 
 if hasattr(sys, '_MEIPASS'):  # PyInstaller's temp directory
     os.environ['PATH'] += os.pathsep + sys._MEIPASS
@@ -66,8 +67,8 @@ class FilteredComboList():
         changed, self.filter_text = imgui.input_text(f"##{self.label}_filter", self.filter_text, 256)
         if changed:
             self.index = 0
-        filtered_items = [item for item in self.items if self.filter_text.lower() in item.name.lower()]
-        filtered_item_names = [item.name for item in self.items if self.filter_text.lower() in item.name.lower()]
+        filtered_items = sorted([item for item in self.items if self.filter_text.lower() in item.name.lower()], key=self.by_closest_match(self.filter_text), reverse=True)
+        filtered_item_names = [item.name for item in filtered_items] if filtered_items else []
         clicked, selected_index = imgui.combo(f"##{self.label}", self.index, filtered_item_names)
         imgui.pop_item_width()
         if clicked:
@@ -99,6 +100,13 @@ class FilteredComboList():
             output_list.append(course_sections)
         return output_list
 
+    def by_closest_match(self, filter_text: str):
+        pattern = "".join((letter + "?" for letter in list(filter_text.lower())))
+
+        def key(item: Course):
+            return len(re.match(pattern, item.name.lower()).group())
+        return key
+
 
 class DaysFilter:
     def __init__(self):
@@ -109,7 +117,7 @@ class DaysFilter:
         imgui.text("Day Filter: ")
         imgui.same_line()
         imgui.push_item_width(100)
-        clicked, selected_index = imgui.combo("##rangeOrExact", int(self.is_range), ["Exactly", "Atleast"])
+        clicked, selected_index = imgui.combo("##rangeOrExact", int(self.is_range), ["Exactly", "At most"])
         if clicked:
             self.is_range = False if selected_index == 0 else True
         imgui.same_line()

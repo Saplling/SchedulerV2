@@ -13,6 +13,7 @@ import re
 from datetime import time, datetime
 import copy
 from webdriver_manager.chrome import ChromeDriverManager
+import sys
 
 
 class TimeRange:
@@ -154,6 +155,26 @@ def get_session() -> requests.Session:
             session.cookies.set(cookie['name'], cookie['value'])
     finally:
         driver.quit()
+    session.headers = {
+        "Accept": r"text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+        "Accept-Encoding": r"gzip, deflate, br, zstd",
+        "Accept-Language": r"en-US,en;q=0.9,ar-AE;q=0.8,ar;q=0.7",
+        "cache-control": r"max-age=0",
+        "priority": r"u=0, i",
+        "referer": r"https://cudportal.cud.ac.ae/student/cePortalOffering.asp",
+        "sec-ch-ua": r'"Google Chrome";v="137", "Chromium";v="137", "Not/A)Brand";v="24"',
+        "sec-ch-ua-mobile": r"?0",
+        "sec-ch-ua-platform": r"Windows",
+        "sec-fetch-dest": r"document",
+        "sec-fetch-mode": r"navigate",
+        "sec-fetch-site": r"same-origin",
+        "sec-fetch-user": r"?1",
+        "upgrade-insecure-requests": "1",
+        "user-agent": r'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36'
+
+
+    }
+
     return session
 
 
@@ -181,7 +202,10 @@ def get_all_courses_in_department(session: requests.Session, department: str) ->
             course = Course(course_id, re.sub(r"\d+", "", course_id), course_name, credit_hours)
             if course.name in [course.name for course in courses]:  # HACK FIX CAUSE CUD SUCKS ASS AND SOMETIMES HAVE IDENTICAL COURSES WITH DIFFERENT COURSE IDS :DDDDDD
                 continue
-            for i, table in enumerate(table_element.find_all("table", class_="Portal_Group_Table nested", summary=f"{course_name} Schedule")):
+            nested_tables = table_element.find_all("table", class_="Portal_Group_Table nested", summary=f"{course_name} Schedule")
+            if not nested_tables:
+                nested_tables = table_element.find_all("table", class_="Portal_Group_Table nested", summary=f"{course_name}  Schedule")
+            for i, table in enumerate(nested_tables):
                 sessions: list[CourseSession] = []
                 for row in table.find_all("tr", class_=""):
                     cells = row.find_all("td")
@@ -199,6 +223,10 @@ def get_all_courses_in_department(session: requests.Session, department: str) ->
     return (courses, departments_list)
 
 
+def get_accessKey(session: requests.Session):
+    ...
+
+
 def get_page_in_department(session: requests.Session, page_num, department) -> requests.Response:
     URL = r"https://cudportal.cud.ac.ae/student/cePortalOffering.asp"
     form_data = {
@@ -211,8 +239,13 @@ def get_page_in_department(session: requests.Session, page_num, department) -> r
         "f_Departments": department,  # Example: a department code
         "f_Divisions": "",  # Division filter
         "page": page_num,  # Start with page 1
+        "TimeFrom": "",
+        "TimeTo": "",
+        "departmentSelect": department,
+        "accessKey": "",
     }
-    response = session.post(URL, data=form_data)
+    # response = session.post(URL, data=form_data)
+    response = session.post(URL, form_data)
     if response.status_code != 200:
         raise RuntimeError("Couldn't get correct response")
     return response
@@ -222,7 +255,7 @@ def get_pages_num(soup: BeautifulSoup) -> int:
     line = soup.find("div", class_="Portal_Grid_Pager").get_text(strip=True)
     i = line.find(": ") + 2
     try:
-        num = int(line[i::i+1])
+        num = int(line[i::i+2])
     except Exception as e:
         raise e
     return num
@@ -234,6 +267,8 @@ def get_departments(soup: BeautifulSoup) -> list[str]:
     return option_str
 
 # result = get_all_courses_in_department(get_session(), "BCS")
+# print("hehe")
+
 # with open("all_courses.pickle", "wb") as file:
 #     pickle.dump(result, file)
 # with open("test.txt", "w") as file:
